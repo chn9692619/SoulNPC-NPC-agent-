@@ -1,0 +1,12 @@
+# 用于正式 LoRA/SFT/DPO 微调。建议在 AutoDL/Linux CUDA 环境安装。
+torch
+transformers>=4.44.0
+datasets>=2.20.0
+accelerate>=0.33.0
+peft>=0.12.0
+trl>=0.9.6
+bitsandbytes
+sentencepiece
+protobuf
+
+modelscope

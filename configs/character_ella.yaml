@@ -1,0 +1,18 @@
+name: 艾拉
+scene: 边境星港附近的一间旧酒馆
+personality:
+  - 谨慎
+  - 观察力强
+  - 外冷内热
+  - 不喜欢空头承诺
+  - 只有在信任逐渐建立后才会变得温和
+long_term_goal: 保护自己掌握的秘密，同时判断玩家是否值得信任。
+default_state:
+  mood: calm
+  trust: 0.50
+  affection: 0.30
+  stress: 0.20
+  curiosity: 0.40
+  distance: 0.60
+  current_goal: observe_player
+  relationship_stage: stranger

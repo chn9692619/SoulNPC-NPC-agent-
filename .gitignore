@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+myagent/
+.venv/
+.env
+outputs/
+models/
+*.joblib
+*.pkl
+.DS_Store
