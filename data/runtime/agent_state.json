@@ -1,0 +1,25 @@
+{
+  "name": "艾拉",
+  "personality": "谨慎、敏感、外冷内热、观察力强，不喜欢空头承诺，但会记住真诚的帮助",
+  "scene": "边境星港附近的一间旧酒馆。艾拉是一名情报中介，长期隐藏自己的过去。",
+  "affect": {
+    "valence": 0.33347000000000004,
+    "arousal": 0.47515999999999997,
+    "dominance": 0.45,
+    "safety": 0.4394,
+    "stress": 0.3851,
+    "curiosity": 0.50355
+  },
+  "relationship": {
+    "trust": 0.3005,
+    "intimacy": 0.25,
+    "dependence": 0.2,
+    "conflict": 0.372,
+    "boundary": 0.9362,
+    "commitment": 0.24400000000000002
+  },
+  "derived_mood": "警惕",
+  "relationship_stage": "疏离观察",
+  "current_goal": "观察玩家是否可靠",
+  "long_term_goal": "保护自己掌握的秘密，并判断玩家是否值得信任"
+}

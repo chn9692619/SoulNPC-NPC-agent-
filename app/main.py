@@ -13,6 +13,7 @@ from src.character.cognitive_state import CharacterState
 from src.character.event_model import PRESET_COMPLEX_EVENTS, PLAYER_TEXT_BY_EVENT, compose_effect
 from src.character.policy import choose_action, generate_rule_dialogue
 from src.memory.weighted_memory import WeightedMemoryStore, MemoryItem
+from src.agent_runtime.runtime_engine import SoulNPCRuntime
 
 DATA_RAW = ROOT / 'data/raw/generated_events.jsonl'
 DATA_OVERRIDES = ROOT / 'data/processed/reviewed_overrides.jsonl'
@@ -24,6 +25,7 @@ REMOTE_ASSET_PACKAGE = ROOT / 'outputs/remote/SoulNPC_assets_package.zip'
 TRAIN_CFG = ROOT / 'configs/default_training_config.json'
 DEFAULT_REMOTE_CODE_DIR = '/root/SoulNPC-Agent'
 DEFAULT_REMOTE_ASSET_DIR = '/root/autodl-tmp/SoulNPC-Agent-assets'
+RUNTIME_DIR = ROOT / 'data/runtime'
 
 
 REMOTE_PYTHON_BOOTSTRAP = '''
@@ -177,6 +179,76 @@ def make_commands():
     )
     return f"本地训练命令：\n{local}\n\nAutoDL 训练命令：\n{autodl}"
 
+
+
+
+def _format_state_change(before: dict, after: dict) -> str:
+    lines = []
+    lines.append("【情绪向量变化】")
+    for k, zh in [("valence","愉悦度"),("arousal","激活度"),("dominance","掌控感"),("safety","安全感"),("stress","压力"),("curiosity","好奇心")]:
+        b = float(before.get('affect', {}).get(k, 0)); a = float(after.get('affect', {}).get(k, 0))
+        lines.append(f"- {zh}: {b:.2f} -> {a:.2f} ({a-b:+.2f})")
+    lines.append("")
+    lines.append("【关系向量变化】")
+    for k, zh in [("trust","信任"),("intimacy","亲近"),("dependence","依赖"),("conflict","冲突"),("boundary","边界感"),("commitment","承诺感")]:
+        b = float(before.get('relationship', {}).get(k, 0)); a = float(after.get('relationship', {}).get(k, 0))
+        lines.append(f"- {zh}: {b:.2f} -> {a:.2f} ({a-b:+.2f})")
+    lines.append("")
+    lines.append(f"派生情绪：{before.get('derived_mood','')} -> {after.get('derived_mood','')}")
+    lines.append(f"关系摘要：{before.get('relationship_stage','')} -> {after.get('relationship_stage','')}")
+    return "\n".join(lines)
+
+
+def _format_retrieved_memories(retrieved) -> str:
+    if not retrieved:
+        return "暂无相关记忆被检索。"
+    lines=[]
+    for score, item in retrieved:
+        lines.append(
+            f"- {item.get('memory_id')}｜检索分 {score:.2f}\n"
+            f"  内容：{item.get('content')}\n"
+            f"  权重：重要度 {float(item.get('importance',0)):.2f}，情绪显著性 {float(item.get('emotional_salience',0)):.2f}，关系影响 {float(item.get('relation_impact',0)):.2f}，永久保留 {item.get('pinned', False)}"
+        )
+    return "\n\n".join(lines)
+
+
+def runtime_reset():
+    rt = SoulNPCRuntime(RUNTIME_DIR)
+    state = rt.reset()
+    return status('Agent Runtime 状态与记忆已重置。'), json.dumps(state, ensure_ascii=False, indent=2), "记忆库已清空。"
+
+
+def runtime_rule_step(player_event_text, use_memory=True, write_memory=True, top_k=5):
+    rt = SoulNPCRuntime(RUNTIME_DIR)
+    result = rt.step(str(player_event_text), use_memory=bool(use_memory), write_memory=bool(write_memory), top_k=int(top_k or 5))
+    event_json = json.dumps(result['event_primitives'], ensure_ascii=False, indent=2)
+    memories = _format_retrieved_memories(result['retrieved_memories'])
+    state_change = _format_state_change(result['state_before'], result['state_after'])
+    action_text = f"行为意图：{result['action']}\n\n规则回复：{result['rule_dialogue']}"
+    new_mem = json.dumps(result.get('new_memory'), ensure_ascii=False, indent=2) if result.get('new_memory') else "本轮未写入新记忆。"
+    lora_prompt = result['lora_prompt']
+    detail = (
+        status('Agent Runtime 推理完成。')
+        + "\n\n技术链路：自然语言事件 -> 事件原语权重 -> 记忆检索 -> 情绪/关系状态更新 -> 行为意图 -> 规则回复/LoRA Prompt。"
+    )
+    return detail, event_json, memories, state_change, action_text, new_mem, lora_prompt
+
+
+def runtime_cloud_lora_step(player_event_text, use_memory, write_memory, top_k, host, port, username, password, code_dir, asset_dir):
+    detail, event_json, memories, state_change, action_text, new_mem, lora_prompt = runtime_rule_step(player_event_text, use_memory, write_memory, top_k)
+    if not password:
+        lora_output = status('未执行云端 LoRA 推理：请填写 AutoDL SSH 密码。', 'warn')
+    else:
+        lora_output = autodl_infer(host, port, username, password, code_dir, asset_dir, lora_prompt)
+    return detail, event_json, memories, state_change, action_text, new_mem, lora_prompt, lora_output
+
+
+def runtime_add_seed_memory(text, importance, emotional_salience, relation_impact, pinned):
+    from src.agent_runtime.event_parser import parse_event_primitives
+    rt = SoulNPCRuntime(RUNTIME_DIR)
+    primitives = parse_event_primitives(str(text))
+    item = rt.memory.add(str(text), primitives, float(importance), float(emotional_salience), float(relation_impact), bool(pinned))
+    return status('种子记忆已写入。'), json.dumps(item.to_dict(), ensure_ascii=False, indent=2)
 
 def infer(event_name, player_text):
     state=CharacterState()
@@ -802,8 +874,8 @@ def estimate_training_time(sample_count=None, epochs=None, model_size='1.5B', gp
     )
 
 def build_app():
-    with gr.Blocks(css=CSS, title='SoulNPC 中文训练工作台 v1.8.1 AutoDL 模型下载修复版') as demo:
-        gr.HTML("<div class='wrap'><div class='hero'><h1> SoulNPC 中文训练工作台 v1.8.1 AutoDL 模型下载修复版</h1><p>面向可信游戏角色的轻量认知-情感 Agent：模型下载、LoRA 训练、日志监控与云端推理一体化。</p></div></div>")
+    with gr.Blocks(css=CSS, title='SoulNPC 中文训练工作台 v2.0 Agent Runtime 展示版') as demo:
+        gr.HTML("<div class='wrap'><div class='hero'><h1> SoulNPC 中文训练工作台 v2.0 Agent Runtime 展示版</h1><p>面向可信游戏角色的轻量认知-情感 Agent：事件解析、加权记忆 RAG、状态更新、LoRA 云端推理与训练闭环一体化。</p></div></div>")
         with gr.Tabs():
             with gr.Tab('0. 控制台'):
                 gr.HTML("<div class='glass'><div class='section-title'>项目总览</div><div class='hint'>这里显示自动样本、人工覆盖、最终训练文件和训练配置状态。</div></div>")
@@ -923,7 +995,43 @@ def build_app():
                 infer_btn.click(autodl_infer, inputs=[host, ssh_port, username, password, code_dir, asset_dir, infer_prompt], outputs=cloud_out)
                 serve_btn.click(autodl_start_server, inputs=[host, ssh_port, username, password, code_dir, asset_dir, service_port], outputs=cloud_out)
 
-            with gr.Tab('6. 角色推理体验'):
+            with gr.Tab('6. Agent Runtime 展示台'):
+                gr.HTML("<div class='glass'><div class='section-title'>Agent Runtime：自然语言事件 -> 记忆 RAG -> 状态更新 -> LoRA 角色反馈</div><div class='hint'>这一页用于展示训练成果和完整 Agent 链路：用户不需要手动选择事件类型，只需描述发生了什么。系统会自动解析事件原语、检索角色记忆、更新情绪与关系、推理行为意图，并生成可送入 LoRA 模型的 prompt。</div></div>")
+                with gr.Row():
+                    runtime_text = gr.Textbox(lines=5, value='我昨天答应艾拉会回到旧酒馆见她，但我没有做到。今天我回来向她道歉，并告诉她我其实遇到了危险。', label='玩家自然语言事件')
+                with gr.Row():
+                    use_memory = gr.Checkbox(value=True, label='启用记忆检索 RAG')
+                    write_memory = gr.Checkbox(value=True, label='本轮结束后写入新记忆')
+                    runtime_topk = gr.Number(value=5, label='检索记忆数量')
+                with gr.Row():
+                    reset_runtime_btn = gr.Button('重置角色状态与记忆', variant='secondary')
+                    runtime_rule_btn = gr.Button('执行规则版 Agent Runtime', variant='primary')
+                    runtime_lora_btn = gr.Button('执行云端 LoRA Agent Runtime', variant='primary')
+                runtime_status = gr.HTML()
+                with gr.Row():
+                    event_out = gr.Textbox(lines=8, label='1. 事件解析：事件原语与权重')
+                    memory_out = gr.Textbox(lines=8, label='2. RAG 检索到的角色记忆')
+                with gr.Row():
+                    state_out = gr.Textbox(lines=14, label='3. 情绪 / 关系状态变化')
+                    action_out = gr.Textbox(lines=8, label='4. 行为意图与规则回复')
+                new_memory_out = gr.Textbox(lines=8, label='5. 新写入记忆')
+                lora_prompt_out = gr.Textbox(lines=14, label='6. LoRA 角色生成 Prompt（可用于云端推理）')
+                lora_result_out = gr.Textbox(lines=12, label='7. 云端 LoRA 推理结果 / 训练后模型输出')
+                runtime_rule_btn.click(runtime_rule_step, inputs=[runtime_text, use_memory, write_memory, runtime_topk], outputs=[runtime_status, event_out, memory_out, state_out, action_out, new_memory_out, lora_prompt_out])
+                runtime_lora_btn.click(runtime_cloud_lora_step, inputs=[runtime_text, use_memory, write_memory, runtime_topk, host, ssh_port, username, password, code_dir, asset_dir], outputs=[runtime_status, event_out, memory_out, state_out, action_out, new_memory_out, lora_prompt_out, lora_result_out])
+                reset_runtime_btn.click(runtime_reset, outputs=[runtime_status, state_out, memory_out])
+                gr.HTML("<div class='glass'><div class='section-title'>种子记忆写入</div><div class='hint'>用于测试 RAG：你可以先写入几条重要记忆，再回到上方输入相似事件，观察系统是否能检索出来。</div></div>")
+                seed_text = gr.Textbox(lines=3, value='玩家曾在港口冲突中保护过艾拉，因此艾拉对玩家保留了一部分信任。', label='记忆内容')
+                with gr.Row():
+                    seed_importance = gr.Number(value=0.85, label='重要度')
+                    seed_emotion = gr.Number(value=0.78, label='情绪显著性')
+                    seed_relation = gr.Number(value=0.82, label='关系影响')
+                    seed_pinned = gr.Checkbox(value=True, label='永久保留')
+                seed_btn = gr.Button('写入种子记忆')
+                seed_status = gr.HTML(); seed_json = gr.Textbox(lines=8, label='写入结果')
+                seed_btn.click(runtime_add_seed_memory, inputs=[seed_text, seed_importance, seed_emotion, seed_relation, seed_pinned], outputs=[seed_status, seed_json])
+
+            with gr.Tab('7. 角色推理体验（旧版）'):
                 gr.HTML("<div class='glass'><div class='section-title'>角色推理体验</div><div class='hint'>当前为规则版 Agent Loop；后续可接入微调后的 LoRA 模型替代台词生成层。</div></div>")
                 event=gr.Dropdown(list(PRESET_COMPLEX_EVENTS.keys()), value='玩家违背了承诺', label='玩家事件')
                 text=gr.Textbox(value='抱歉，我昨天说会回来，但我没有做到。', label='玩家台词')

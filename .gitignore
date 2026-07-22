@@ -8,3 +8,6 @@ models/
 *.joblib
 *.pkl
 .DS_Store
+config/model_config.json
+data/traces/
+data/checkpoints/

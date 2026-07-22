@@ -6,3 +6,19 @@ matplotlib>=3.7.0
 python-dotenv>=1.0.0
 requests>=2.31.0
 paramiko>=3.4.0
+
+# Agent Orchestration (LangGraph)
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+
+# API Server
+fastapi>=0.115.0
+uvicorn>=0.30.0
+pydantic>=2.0.0
+
+# Observability (optional but recommended)
+langfuse>=2.0.0
+
+# Docker (for production deployment)
+# docker and docker-compose are system-level dependencies

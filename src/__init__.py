@@ -1,0 +1,1 @@
+"""SoulNPC API package."""
